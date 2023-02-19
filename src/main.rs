@@ -138,11 +138,15 @@ fn walk(node: &Node, prefix: &str) -> io::Result<()> {
     }
     for (name, child) in node.children.iter() {
         index -= 1;
+        let node_type = match child.name == child._type || child._type == "".to_string() {
+            true => "".to_string(),
+            false => format!(" ({})", child._type),
+        };
         if index == 0 {
-            println!("{}└── {}", prefix, name);
+            println!("{}└── {}{}", prefix, name, node_type);
             walk(&child, &format!("{}    ", prefix))?;
         } else {
-            println!("{}├── {}", prefix, name);
+            println!("{}├── {}{}", prefix, name, node_type);
             walk(&child, &format!("{}│   ", prefix))?;
         }
     }
