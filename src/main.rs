@@ -12,7 +12,7 @@ struct Cli {
     file: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ExtResource {
     path: String,
     _type: String,
@@ -61,7 +61,7 @@ struct Node {
     _type: String,
     parent: String,
     index: i32,
-    instance: usize,
+    instance: Option<ExtResource>,
     parameters: Vec<NodeParameter>,
     children: IndexMap<String, Node>,
     connections: Vec<Connection>,
@@ -74,7 +74,7 @@ impl Node {
             _type: "".to_string(),
             parent: "".to_string(),
             index: -1,
-            instance: 0,
+            instance: None,
             parameters: Vec::new(),
             children: IndexMap::new(),
             connections: Vec::new(),
@@ -112,6 +112,13 @@ impl Connection {
 
 fn walk(node: &Node, prefix: &str) -> io::Result<()> {
     let mut index = node.children.len();
+    if let Some(res) = &node.instance {
+        if index == 0 {
+            println!("{}    * ({}) {}", prefix, res._type, res.path);
+        } else {
+            println!("{}│   * ({}) {}", prefix, res._type, res.path);
+        }
+    }
     for param in node.parameters.iter() {
         if index == 0 {
             println!("{}    * {}: {}", prefix, param.key, param.val);
@@ -208,7 +215,9 @@ fn main() -> io::Result<()> {
                 node.index = caps.name("index").unwrap().as_str().parse().unwrap();
             }
             if let Some(caps) = node_instance_re.captures(caps.name("remainder").unwrap().as_str()) {
-                node.instance = caps.name("instance").unwrap().as_str().parse().unwrap();
+                if let Ok(instance) = caps.name("instance").unwrap().as_str().parse::<usize>() {
+                    node.instance = Some(ext_resources[instance].clone());
+                }
             }
             nodes.push(node);
         }

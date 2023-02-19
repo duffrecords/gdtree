@@ -16,6 +16,7 @@ Main
 │       * anchor_bottom: 1.0
 │       * color: Color( 0.219608, 0.372549, 0.380392, 1 )
 ├── Player
+│       * (PackedScene) res://Player.tscn
 │       * connection: Player:Hit() => Main:GameOver()
 ├── MobTimer (Timer)
 │       * wait_time: 0.5
@@ -32,6 +33,7 @@ Main
 │   │   * curve: Curve2D
 │   └── MobSpawnLocation (PathFollow2D)
 ├── HUD
+│       * (PackedScene) res://HUD.tscn
 │       * connection: HUD:StartGame() => Main:NewGame()
 ├── Music (AudioStreamPlayer)
 │       * stream: res://art/House In a Forest Loop.ogg
