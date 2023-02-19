@@ -16,18 +16,23 @@ Main
 │       * anchor_bottom: 1.0
 │       * color: Color( 0.219608, 0.372549, 0.380392, 1 )
 ├── Player
+│       * connection: Player:Hit() => Main:GameOver()
 ├── MobTimer
 │       * wait_time: 0.5
+│       * connection: MobTimer:timeout() => Main:OnMobTimerTimeout()
 ├── ScoreTimer
+│       * connection: ScoreTimer:timeout() => Main:OnScoreTimerTimeout()
 ├── StartTimer
 │       * wait_time: 2.0
 │       * one_shot: true
+│       * connection: StartTimer:timeout() => Main:OnStartTimerTimeout()
 ├── StartPosition
 │       * position: Vector2( 240, 450 )
 ├── MobPath
 │   │   * curve: Curve2D
 │   └── MobSpawnLocation
 ├── HUD
+│       * connection: HUD:StartGame() => Main:NewGame()
 ├── Music
 │       * stream: res://art/House In a Forest Loop.ogg
 └── DeathSound

@@ -64,6 +64,7 @@ struct Node {
     instance: usize,
     parameters: Vec<NodeParameter>,
     children: IndexMap<String, Node>,
+    connections: Vec<Connection>,
 }
 
 impl Node {
@@ -76,6 +77,7 @@ impl Node {
             instance: 0,
             parameters: Vec::new(),
             children: IndexMap::new(),
+            connections: Vec::new(),
         }
     }
     fn add_child(&mut self, node: Node, mut parents: Vec<String>) {
@@ -85,6 +87,25 @@ impl Node {
             child.add_child(node, parents);
         } else {
             self.children.entry(node.name.clone()).or_insert(node);
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Connection {
+    signal: String,
+    from: String,
+    to: String,
+    method: String,
+}
+
+impl Connection {
+    fn new(signal: &str, from: &str, to: &str, method: &str) -> Self {
+        Self {
+            signal: signal.to_string(),
+            from: from.to_string(),
+            to: to.to_string(),
+            method: method.to_string(),
         }
     }
 }
@@ -106,6 +127,13 @@ fn walk(node: &Node, prefix: &str) -> io::Result<()> {
             } else {
                 println!("{}      {}├── {}: {}", prefix, padding, sub.key, sub.val);
             }
+        }
+    }
+    for conn in node.connections.iter() {
+        if index == 0 {
+            println!("{}    * connection: {}:{}() => {}:{}()", prefix, conn.from, conn.signal, conn.to, conn.method);
+        } else {
+            println!("{}│   * connection: {}:{}() => {}:{}()", prefix, conn.from, conn.signal, conn.to, conn.method);
         }
     }
     for (name, child) in node.children.iter() {
@@ -137,9 +165,11 @@ fn main() -> io::Result<()> {
     let node_instance_re = Regex::new(r#"instance=ExtResource\( (?P<instance>[^"]+) \).*"#).unwrap();
 
     let parameter_re = Regex::new(r"^(?P<k>[a-z][a-z_]*) = (?P<v>.*)").unwrap();
+    let connection_re = Regex::new(r#"^\[connection signal="(?P<signal>[^"]+)" from="(?P<from>[^"]+)" to="(?P<to>[^"]+)" method="(?P<method>[^"]+)"\]"#).unwrap();
 
     let mut ext_resources = vec![ExtResource::new("".to_string(), "".to_string())];
     let mut sub_resources = vec![SubResource::new("".to_string())];
+    let mut connections = Vec::<Connection>::new();
     let mut nodes: Vec<Node> = Vec::new();
     let mut root = Node::new("");
 
@@ -211,9 +241,25 @@ fn main() -> io::Result<()> {
                 }
             }
         }
+        else if let Some(caps) = connection_re.captures(&line) {
+            let conn = Connection::new(
+                caps.name("signal").unwrap().as_str(),
+                caps.name("from").unwrap().as_str(),
+                match caps.name("to").unwrap().as_str() {
+                    "." => nodes[0].name.as_str(),
+                    s => s,
+                },
+                caps.name("method").unwrap().as_str(),
+            );
+            connections.push(conn);
+        }
     }
 
-    for node in nodes {
+    for mut node in nodes {
+        if let Some(index) = connections.iter().position(|c| c.from == node.name) {
+            let conn = connections.swap_remove(index);
+            node.connections.push(conn);
+        }
         if node.parent == "".to_string() {
             // root node
             root = node;
@@ -224,9 +270,7 @@ fn main() -> io::Result<()> {
             } else {
                 parents = node.parent.split("/").map(|x| x.to_string()).collect();
             }
-            //let parent = parents.remove(0);
             root.add_child(node, parents)
-            // nodes.push(node);
         }
     }
 
@@ -235,12 +279,3 @@ fn main() -> io::Result<()> {
 
     Ok(())
 }
-
-
-/*
-
-├
-│
-└
-
-*/
