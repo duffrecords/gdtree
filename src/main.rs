@@ -1,6 +1,7 @@
 use clap::Parser;
 use indexmap::IndexMap;
 use regex::Regex;
+use std::collections::HashMap;
 use std::io;
 use std::io::prelude::*;
 use std::io::BufReader;
@@ -16,13 +17,17 @@ struct Cli {
 struct ExtResource {
     path: String,
     _type: String,
+    id: String,
+    uid: String,
 }
 
 impl ExtResource {
-    fn new(path: String, _type: String) -> Self {
+    fn new(path: String, _type: String, uid: String, id: String) -> Self {
         Self {
             path: path,
             _type: _type,
+            id: id,
+            uid: uid,
         }
     }
 }
@@ -110,13 +115,16 @@ impl Connection {
     }
 }
 
+/// Traverse and print the node tree
 fn walk(node: &Node, prefix: &str) -> io::Result<()> {
     let mut index = node.children.len();
     if let Some(res) = &node.instance {
-        if index == 0 {
-            println!("{}    * ({}) {}", prefix, res._type, res.path);
-        } else {
-            println!("{}│   * ({}) {}", prefix, res._type, res.path);
+        if &node.parent != "" {
+            if index == 0 {
+                println!("{}    * ({}) {}", prefix, res._type, res.path);
+            } else {
+                println!("{}│   * ({}) {}", prefix, res._type, res.path);
+            }
         }
     }
     for param in node.parameters.iter() {
@@ -166,87 +174,156 @@ fn main() -> io::Result<()> {
     let f = File::open(&cli.file)?;
     let reader = BufReader::new(f);
 
-    let ext_res_re = Regex::new(r#"^\[ext_resource path="(?P<path>[^"]+)" type="(?P<type>[^"]+)" id=(?P<id>[0-9]+).*\]$"#).unwrap();
-    let sub_res_re = Regex::new(r#"^\[sub_resource type="(?P<type>[^"]+)" id=(?P<id>[0-9]+).*\]$"#).unwrap();
+    let ext_res_re = Regex::new(r#"^\[ext_resource (?P<remainder>.*)\]$"#).unwrap();
+    let fields_re = Regex::new(r#"" "#).unwrap();
+    let kv_re = Regex::new(r#"=""#).unwrap();
+    let ext_res_id_re = Regex::new(r#".*ExtResource\([ "]*(?P<id>[0-9a-z_]+)[ "]*\)"#).unwrap();
+    let sub_res_re = Regex::new(r#"^\[sub_resource type="(?P<type>[^"]+)" id="(?P<id>[0-9a-z_]+)".*\]$"#).unwrap();
+    let sub_res_id_re = Regex::new(r#".*SubResource\([ "]*(?P<id>[0-9a-z_]+)[ "]*\)"#).unwrap();
 
     let node_re = Regex::new(r#"^\[node name="(?P<name>[^"]+)"(?P<remainder>.*)\]$"#).unwrap();
     let node_type_re = Regex::new(r#"type="(?P<type>[^"]+)".*"#).unwrap();
     let node_parent_re = Regex::new(r#"parent="(?P<parent>[^"]+)".*"#).unwrap();
     let node_index_re = Regex::new(r#"index="(?P<index>[^"]+)".*"#).unwrap();
-    let node_instance_re = Regex::new(r#"instance=ExtResource\( (?P<instance>[^"]+) \).*"#).unwrap();
+    let node_instance_re = Regex::new(r#"instance=ExtResource\([ "]*(?P<instance>[0-9]+)[ "]*\).*"#).unwrap();
 
     let parameter_re = Regex::new(r"^(?P<k>[a-z][a-z_]*) = (?P<v>.*)").unwrap();
     let connection_re = Regex::new(r#"^\[connection signal="(?P<signal>[^"]+)" from="(?P<from>[^"]+)" to="(?P<to>[^"]+)" method="(?P<method>[^"]+)"\]"#).unwrap();
 
-    let mut ext_resources = vec![ExtResource::new("".to_string(), "".to_string())];
-    let mut sub_resources = vec![SubResource::new("".to_string())];
+    let mut ext_resources = HashMap::new();
+    let mut sub_resources = HashMap::new();
     let mut connections = Vec::<Connection>::new();
-    let mut nodes: Vec<Node> = Vec::new();
+    let mut nodes = Vec::<Node>::new();
     let mut root = Node::new("");
+    let mut last_sub_id = "".to_string();
 
+    // parse scene file into structures
     for line in reader.lines() {
         let line = line?;
         if let Some(caps) = ext_res_re.captures(&line) {
-            while ext_resources.len() < caps.name("id").unwrap().as_str().parse().unwrap() {
-                ext_resources.push(ExtResource::new("".to_string(), "".to_string()));
+            // line matches [ext_resource ...]
+            let mut ext_res = ExtResource::new("".to_string(), "".to_string(), "".to_string(), "".to_string());
+            let fields: Vec<&str> = fields_re.split(caps.name("remainder").unwrap().as_str()).collect();
+            for field in fields {
+                let kv: Vec<&str> = kv_re.split(field).collect();
+                if kv[0] == "path" {
+                    ext_res.path = kv[1].to_string();
+                } else if kv[0] == "type" {
+                    ext_res._type = kv[1].to_string();
+                } else if kv[0] == "uid" {
+                    ext_res.uid = kv[1].to_string();
+                } else if kv[0] == "id" {
+                    ext_res.id = kv[1].to_string().replace("\"", "");
+                }
             }
-            ext_resources.push(ExtResource::new(
-                String::from(caps.name("path").unwrap().as_str()),
-                String::from(caps.name("type").unwrap().as_str()),
-            ));
+            ext_resources.insert(ext_res.id.clone(), ext_res.clone());
         }
         else if let Some(caps) = sub_res_re.captures(&line) {
-            while sub_resources.len() < caps.name("id").unwrap().as_str().parse().unwrap() {
-                sub_resources.push(SubResource::new("".to_string()));
-            }
-            sub_resources.push(SubResource::new(
-                String::from(caps.name("type").unwrap().as_str()),
-            ));
+            // line matches [sub_resource ...]
+            let id = match caps.name("id") {
+                Some(id) => id.as_str().to_string(),
+                None => "".to_string(),
+            };
+            last_sub_id = id.clone();
+            sub_resources.insert(id, SubResource::new(String::from(caps.name("type").unwrap().as_str())));
         }
         else if let Some(caps) = node_re.captures(&line) {
+            // line matches [node ...]
             let mut node = Node::new(caps.name("name").unwrap().as_str());
-            if let Some(caps) = node_type_re.captures(caps.name("remainder").unwrap().as_str()) {
-                node._type = String::from(caps.name("type").unwrap().as_str());
-            }
-            if let Some(caps) = node_parent_re.captures(caps.name("remainder").unwrap().as_str()) {
-                node.parent = String::from(caps.name("parent").unwrap().as_str());
-            }
-            if let Some(caps) = node_index_re.captures(caps.name("remainder").unwrap().as_str()) {
-                node.index = caps.name("index").unwrap().as_str().parse().unwrap();
-            }
-            if let Some(caps) = node_instance_re.captures(caps.name("remainder").unwrap().as_str()) {
-                if let Ok(instance) = caps.name("instance").unwrap().as_str().parse::<usize>() {
-                    node.instance = Some(ext_resources[instance].clone());
+            if let Some(m) = caps.name("remainder") {
+                let remainder = m.as_str();
+                if let Some(c) = node_type_re.captures(remainder) {
+                    if let Some(m) = c.name("type") {
+                        node._type = m.as_str().to_string();
+                    }
+                }
+                if let Some(c) = node_parent_re.captures(remainder) {
+                    if let Some(m) = c.name("parent") {
+                        node.parent = m.as_str().to_string();
+                    }
+                }
+                if let Some(c) = node_index_re.captures(remainder) {
+                    if let Some(m) = c.name("index") {
+                        if let Ok(idx) = m.as_str().parse() {
+                            node.index = idx;
+                        }
+                    }
+                }
+                if let Some(c) = node_instance_re.captures(remainder) {
+                    if let Some(instance) = c.name("instance") {
+                        node.instance = Some(ext_resources[instance.as_str()].clone());
+                    }
                 }
             }
             nodes.push(node);
         }
         else if let Some(caps) = parameter_re.captures(&line) {
+            // line matches ___ = ___
             if nodes.len() == 0 {
-                if let Some(last_sub) = sub_resources.last_mut() {
+                // no nodes parsed yet, these key/value pairs belong to sub resources
+                if let Some(last_sub) = sub_resources.get_mut(&last_sub_id) {
                     (*last_sub).parameters.push(Parameter{
                         key: String::from(caps.name("k").unwrap().as_str()),
                         val: String::from(caps.name("v").unwrap().as_str()),
                     });
                 }
             } else {
+                // these key/value pairs belong to nodes
                 if let Some(last_node) = nodes.last_mut() {
                     let val = String::from(caps.name("v").unwrap().as_str());
                     (*last_node).parameters.push(NodeParameter{
                         key: String::from(caps.name("k").unwrap().as_str()),
                         val: if val.starts_with("ExtResource") {
-                                let idx: usize = val.replace("ExtResource( ", "").replace(" )", "").parse().unwrap();
-                                ext_resources[idx].path.clone()
-                                // format!("{:?}", ext_resources[idx])
+                                match ext_res_id_re.captures(&val) {
+                                    Some(caps) => {
+                                        match caps.name("id") {
+                                            Some(id) => match ext_resources.get(id.as_str()) {
+                                                Some(res) => format!("({}) {}", res._type.clone(), res.path.clone()),
+                                                None => "".to_string(),
+                                            },
+                                            None => "".to_string(),
+                                        }
+                                    },
+                                    None => "".to_string()
+                                }
                             } else if val.starts_with("SubResource") {
-                                let idx: usize = val.replace("SubResource( ", "").replace(" )", "").parse().unwrap();
-                                sub_resources[idx]._type.clone()
+                                match sub_res_id_re.captures(&val) {
+                                    Some(caps) => {
+                                        match caps.name("id") {
+                                            Some(id) => {
+                                                match sub_resources.get(id.as_str()) {
+                                                    Some(res) => format!("({})", res._type.clone()),
+                                                    None => "".to_string(),
+                                                }
+                                            },
+                                            None => "".to_string(),
+                                        }
+                                    },
+                                    None => {
+                                        "".to_string()
+                                    }
+                                }
                             } else {
                                 val.clone()
                             },
                         sub_params: if val.starts_with("SubResource") {
-                                let idx: usize = val.replace("SubResource( ", "").replace(" )", "").parse().unwrap();
-                                sub_resources[idx].parameters.clone()
+                                match sub_res_id_re.captures(&val) {
+                                    Some(caps) => {
+                                        match caps.name("id") {
+                                            Some(id) => {
+                                                let idx = id.as_str();
+                                                match sub_resources.get(idx) {
+                                                    Some(res) => res.parameters.clone(),
+                                                    None => Vec::new(),
+                                                }
+                                            },
+                                            None => Vec::new(),
+                                        }
+                                    },
+                                    None => {
+                                        Vec::new()
+                                    }
+                                }
                             } else {
                                 Vec::new()
                             },
@@ -255,6 +332,7 @@ fn main() -> io::Result<()> {
             }
         }
         else if let Some(caps) = connection_re.captures(&line) {
+            // line matches [connection ...]
             let conn = Connection::new(
                 caps.name("signal").unwrap().as_str(),
                 caps.name("from").unwrap().as_str(),
@@ -269,14 +347,13 @@ fn main() -> io::Result<()> {
     }
 
     for mut node in nodes {
-        if let Some(index) = connections.iter().position(|c| c.from == node.name) {
-            let conn = connections.swap_remove(index);
-            node.connections.push(conn);
-        }
+        // add connections to their corresponding source node
+        node.connections = connections.iter().filter(|c| c.from == node.name || (c.from == ".".to_string() && node.parent == "".to_string())).cloned().collect();
         if node.parent == "".to_string() {
             // root node
             root = node;
         } else {
+            // determine this node's parents and add it somewhere under the root node
             let parents: Vec<String>;
             if node.parent == ".".to_string() {
                 parents = Vec::new();
@@ -287,7 +364,13 @@ fn main() -> io::Result<()> {
         }
     }
 
-    println!("{}", root.name);
+    // print the scene tree to stdout
+    print!("{}", root.name);
+    if let Some(ext_res) = root.instance.clone() {
+        println!(" ({}) {}", ext_res._type, ext_res.path);
+    } else {
+        println!("");
+    }
     walk(&root, "")?;
 
     Ok(())
