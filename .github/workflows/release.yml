@@ -79,6 +79,8 @@ jobs:
           path: target/release/gdtree.exe
 
   release:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest # Define the job to run on Ubuntu
     needs: build # Depends on the build job
 
