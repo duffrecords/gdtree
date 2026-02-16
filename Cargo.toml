@@ -1,6 +1,6 @@
 [package]
 name = "gdtree"
-version = "0.1.4"
+version = "2.0.2"
 edition = "2024"
 authors = ["Ian Young <ian@duffrecords.com>"]
 license = "MIT"
